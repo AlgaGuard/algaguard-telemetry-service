@@ -1,5 +1,6 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { storage } from "./routes.js";
 const config = loadConfig();
 const server = buildApp().listen(config.PORT, () => {
   process.stdout.write(
@@ -20,7 +21,10 @@ async function shutdown(signal: string) {
       signal,
     }) + "\n",
   );
-  server.close((error) => process.exit(error ? 1 : 0));
+  server.close(async (error) => {
+    await storage().close();
+    process.exit(error ? 1 : 0);
+  });
   setTimeout(() => process.exit(1), 10_000).unref();
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

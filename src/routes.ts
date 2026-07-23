@@ -4,7 +4,7 @@ import { TelemetryService } from "./domain.js";
 import { TelemetryRepository } from "./storage.js";
 export const router = Router();
 let repository: TelemetryRepository | undefined;
-const storage = () => (repository ??= new TelemetryRepository());
+export const storage = () => (repository ??= new TelemetryRepository());
 const service = new TelemetryService(
   async (batch) => storage().persist(batch),
   async (event) => storage().publish(event),

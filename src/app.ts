@@ -5,7 +5,7 @@ import express, {
 } from "express";
 import { trace } from "@opentelemetry/api";
 import pino from "pino";
-import { router } from "./routes.js";
+import { router, storage } from "./routes.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 const requestContext: RequestHandler = (request, response, next) => {
@@ -41,13 +41,22 @@ export function buildApp() {
   app.get("/health/live", (_request, response) =>
     response.json({ status: "UP", service: "algaguard-telemetry-service" }),
   );
-  app.get("/health/ready", (_request, response) =>
-    response.json({
-      status: "READY",
-      service: "algaguard-telemetry-service",
-      dependencies: "configured",
-    }),
-  );
+  app.get("/health/ready", async (_request, response) => {
+    try {
+      await storage().health();
+      response.json({
+        status: "READY",
+        service: "algaguard-telemetry-service",
+        dependencies: { timescaledb: "UP" },
+      });
+    } catch {
+      response.status(503).json({
+        status: "NOT_READY",
+        service: "algaguard-telemetry-service",
+        dependencies: { timescaledb: "DOWN" },
+      });
+    }
+  });
   app.use("/v1", router);
   app.use((_request, response) =>
     response

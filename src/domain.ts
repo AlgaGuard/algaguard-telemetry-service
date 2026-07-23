@@ -8,23 +8,33 @@ export interface TelemetryBatch {
     qualityFlags?: string[] | undefined;
   }>;
 }
+export interface BatchOutcome {
+  batchId: string;
+  deviceId: string;
+  status: "ACCEPTED" | "PARTIALLY_ACCEPTED" | "REJECTED" | "DUPLICATE";
+  acceptedThroughSequence: string | null;
+  duplicate: boolean;
+  storedSamples: number;
+  rejectedSequences?: string[];
+  errors?: Array<{ code: string; message: string }>;
+  receivedAt: string;
+}
 export class TelemetryService {
-  private readonly batchIds = new Set<string>();
   constructor(
-    private readonly persist: (batch: TelemetryBatch) => Promise<void>,
+    private readonly persist: (batch: TelemetryBatch) => Promise<BatchOutcome>,
     private readonly publish: (event: Record<string, unknown>) => Promise<void>,
   ) {}
   async accept(batch: TelemetryBatch) {
-    if (this.batchIds.has(batch.batchId))
-      return { status: "DUPLICATE" } as const;
-    await this.persist(batch);
-    this.batchIds.add(batch.batchId);
-    await this.publish({
-      eventType: "telemetry.updated",
-      deviceId: batch.deviceId,
-      payload: batch.samples.at(-1),
-    });
-    return { status: "ACCEPTED", storedSamples: batch.samples.length } as const;
+    const outcome = await this.persist(batch);
+    if (outcome.storedSamples > 0) {
+      await this.publish({
+        eventType: "telemetry.updated",
+        deviceId: batch.deviceId,
+        sequence: batch.samples.at(-1)?.sequence,
+        payload: batch.samples.at(-1),
+      });
+    }
+    return outcome;
   }
 }
 export function page<T>(values: T[], cursor = 0, limit = 50) {
