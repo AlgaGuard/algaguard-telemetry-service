@@ -1,11 +1,11 @@
 export type DeviceReadAuthorizer = (
   subjectId: string,
-  deviceId: string,
+  deviceUuid: string,
 ) => Promise<boolean>;
 
 let cachedToken: { value: string; expiresAt: number } | undefined;
 
-async function serviceToken(environment: NodeJS.ProcessEnv) {
+export async function serviceToken(environment: NodeJS.ProcessEnv) {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 10_000)
     return cachedToken.value;
   const issuer =
@@ -39,7 +39,7 @@ export function createDeviceReadAuthorizer(
 ): DeviceReadAuthorizer {
   const accessUrl =
     environment.ACCESS_SERVICE_URL ?? "http://access-service:3000";
-  return async (subjectId, deviceId) => {
+  return async (subjectId, deviceUuid) => {
     const response = await fetch(
       `${accessUrl}/v1/internal/authorizations/decide`,
       {
@@ -52,7 +52,7 @@ export function createDeviceReadAuthorizer(
           subjectId,
           action: "telemetry.read",
           resourceType: "device",
-          resourceId: deviceId,
+          resourceId: deviceUuid,
         }),
       },
     );

@@ -4,6 +4,8 @@ import request from "supertest";
 import { HttpError, type Authenticator } from "../src/auth.js";
 import { buildApp } from "../src/app.js";
 import { createRouter, type RouteDependencies } from "../src/routes.js";
+import { StaleDeviceContextError } from "../src/domain.js";
+import { acceptedOutcome, batch } from "./fixtures.js";
 test("liveness and correlation middleware are available", async () => {
   const response = await request(buildApp())
     .get("/health/live")
@@ -37,15 +39,7 @@ function authorizedApp(overrides: Partial<RouteDependencies> = {}) {
   const dependencies: RouteDependencies = {
     authenticate,
     authorizeDeviceRead: async () => true,
-    accept: async (batch) => ({
-      batchId: batch.batchId,
-      deviceId: batch.deviceId,
-      status: "ACCEPTED",
-      acceptedThroughSequence: batch.samples.at(-1)?.sequence ?? null,
-      duplicate: false,
-      storedSamples: batch.samples.length,
-      receivedAt: "2026-07-23T00:00:00Z",
-    }),
+    accept: async () => acceptedOutcome,
     history: async () => [],
     aggregate: async () => ({ sampleCount: 0 }),
     ...overrides,
@@ -58,11 +52,7 @@ function authorizedApp(overrides: Partial<RouteDependencies> = {}) {
 
 test("only the authenticated MQTT ingestion client can commit batches", async () => {
   let accepted = false;
-  const body = {
-    batchId: "10000000-0000-4000-8000-000000000001",
-    deviceId: "AG-000001",
-    samples: [{ sequence: "1", values: { ph: 7 } }],
-  };
+  const body = batch;
   const app = authorizedApp({
     accept: async (batch) => {
       accepted = true;
@@ -104,7 +94,7 @@ test("telemetry reads require an Access Service decision", async () => {
   assert.equal(
     (
       await request(denied)
-        .get("/v1/devices/AG-000001/latest")
+        .get(`/v1/devices/${batch.deviceUuid}/latest`)
         .set("authorization", "Bearer user")
     ).status,
     403,
@@ -113,7 +103,7 @@ test("telemetry reads require an Access Service decision", async () => {
   assert.equal(
     (
       await request(allowed)
-        .get("/v1/devices/AG-000001/latest")
+        .get(`/v1/devices/${batch.deviceUuid}/latest`)
         .set("authorization", "Bearer user")
     ).status,
     200,
@@ -123,16 +113,48 @@ test("telemetry reads require an Access Service decision", async () => {
 test("contract maximum of 120 samples is accepted", async () => {
   const samples = Array.from({ length: 120 }, (_, index) => ({
     sequence: String(index + 1),
+    observedAt: new Date(Date.UTC(2026, 6, 23, 0, 0, index)).toISOString(),
+    timestampQuality: "NTP_SYNCED" as const,
+    uptimeMs: String((index + 1) * 1000),
     values: { ph: 7 },
   }));
-  const response = await request(authorizedApp())
+  const response = await request(
+    authorizedApp({
+      accept: async (value) => ({
+        ...acceptedOutcome,
+        acceptedThroughSequence: value.samples.at(-1)?.sequence ?? null,
+        storedSamples: value.samples.length,
+      }),
+    }),
+  )
     .post("/v1/ingestion/batches")
     .set("authorization", "Bearer mqtt")
     .send({
-      batchId: "10000000-0000-4000-8000-000000000001",
-      deviceId: "AG-000001",
+      ...batch,
       samples,
     });
   assert.equal(response.status, 202);
   assert.equal(response.body.storedSamples, 120);
+});
+
+test("stale ownership context returns a retryable conflict without an accepted ACK", async () => {
+  const response = await request(
+    authorizedApp({
+      accept: async () => {
+        throw new StaleDeviceContextError();
+      },
+    }),
+  )
+    .post("/v1/ingestion/batches")
+    .set("authorization", "Bearer mqtt")
+    .send(batch);
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, "STALE_DEVICE_CONTEXT");
+});
+
+test("canonical IDs are not accepted as UUID REST resources", async () => {
+  const response = await request(authorizedApp())
+    .get("/v1/devices/AG-000001/latest")
+    .set("authorization", "Bearer user");
+  assert.equal(response.status, 400);
 });

@@ -7,6 +7,8 @@ import express, {
 import { trace } from "@opentelemetry/api";
 import pino from "pino";
 import { HttpError } from "./auth.js";
+import { StaleDeviceContextError } from "./domain.js";
+import { ZodError } from "zod";
 import { router, storage } from "./routes.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
@@ -73,7 +75,12 @@ export function buildApp(
   );
   const errors: ErrorRequestHandler = (error, _request, response, _next) => {
     logger.error({ err: error }, "request failed");
-    const status = error instanceof HttpError ? error.status : 500;
+    const status =
+      error instanceof HttpError || error instanceof StaleDeviceContextError
+        ? error.status
+        : error instanceof ZodError
+          ? 400
+          : 500;
     response
       .status(status)
       .type("application/problem+json")
@@ -84,8 +91,15 @@ export function buildApp(
             ? "Unauthorized"
             : status === 403
               ? "Forbidden"
-              : "Internal Server Error",
+              : status === 409
+                ? "Conflict"
+                : status === 400
+                  ? "Bad Request"
+                  : "Internal Server Error",
         status,
+        ...(error instanceof StaleDeviceContextError
+          ? { code: error.code }
+          : {}),
       });
   };
   app.use(errors);
