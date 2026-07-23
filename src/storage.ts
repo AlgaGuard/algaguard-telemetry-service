@@ -104,6 +104,7 @@ export class TelemetryRepository {
               errors: rejected.map(() => ({
                 code: "DUPLICATE_SEQUENCE",
                 message: "Sequence already committed",
+                retryable: false,
               })),
             }
           : {}),

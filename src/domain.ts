@@ -16,7 +16,7 @@ export interface BatchOutcome {
   duplicate: boolean;
   storedSamples: number;
   rejectedSequences?: string[];
-  errors?: Array<{ code: string; message: string }>;
+  errors?: Array<{ code: string; message: string; retryable: boolean }>;
   receivedAt: string;
 }
 export class TelemetryService {
