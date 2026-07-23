@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import express, {
   type ErrorRequestHandler,
   type RequestHandler,
+  type Router,
 } from "express";
 import { trace } from "@opentelemetry/api";
 import pino from "pino";
+import { HttpError } from "./auth.js";
 import { router, storage } from "./routes.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
@@ -33,7 +35,12 @@ const requestContext: RequestHandler = (request, response, next) => {
   next();
 };
 
-export function buildApp() {
+export function buildApp(
+  dependencies: {
+    apiRouter?: Router;
+    health?: () => Promise<void>;
+  } = {},
+) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "256kb" }));
@@ -43,7 +50,7 @@ export function buildApp() {
   );
   app.get("/health/ready", async (_request, response) => {
     try {
-      await storage().health();
+      await (dependencies.health ?? (() => storage().health()))();
       response.json({
         status: "READY",
         service: "algaguard-telemetry-service",
@@ -57,7 +64,7 @@ export function buildApp() {
       });
     }
   });
-  app.use("/v1", router);
+  app.use("/v1", dependencies.apiRouter ?? router);
   app.use((_request, response) =>
     response
       .status(404)
@@ -66,11 +73,20 @@ export function buildApp() {
   );
   const errors: ErrorRequestHandler = (error, _request, response, _next) => {
     logger.error({ err: error }, "request failed");
-    response.status(500).type("application/problem+json").json({
-      type: "about:blank",
-      title: "Internal Server Error",
-      status: 500,
-    });
+    const status = error instanceof HttpError ? error.status : 500;
+    response
+      .status(status)
+      .type("application/problem+json")
+      .json({
+        type: "about:blank",
+        title:
+          status === 401
+            ? "Unauthorized"
+            : status === 403
+              ? "Forbidden"
+              : "Internal Server Error",
+        status,
+      });
   };
   app.use(errors);
   return app;
