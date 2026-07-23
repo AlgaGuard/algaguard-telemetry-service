@@ -158,21 +158,24 @@ export class TelemetryRepository {
     if (!this.redis.isOpen) await this.redis.connect();
     await this.redis.publish("algaguard.live", JSON.stringify(event));
   }
-  async history(deviceUuid: string, limit: number) {
+  async history(deviceUuid: string, organizationId: string, limit: number) {
     const result = await this.pool.query(
       `SELECT device_id AS "deviceId",organization_id_at_ingest AS "organizationIdAtIngest",
               ownership_version_at_ingest::text AS "ownershipVersionAtIngest",
               sequence::text,observed_at AS "observedAt",timestamp_quality AS "timestampQuality",
               uptime_ms::text AS "uptimeMs",values,quality_flags AS "qualityFlags",batch_id AS "batchId"
-         FROM telemetry_samples WHERE device_uuid=$1 ORDER BY observed_at DESC LIMIT $2`,
-      [deviceUuid, Math.min(Math.max(limit, 1), 200)],
+         FROM telemetry_samples
+        WHERE device_uuid=$1 AND organization_id_at_ingest=$2
+        ORDER BY observed_at DESC LIMIT $3`,
+      [deviceUuid, organizationId, Math.min(Math.max(limit, 1), 200)],
     );
     return result.rows as Array<Record<string, unknown>>;
   }
-  async aggregate(deviceUuid: string) {
+  async aggregate(deviceUuid: string, organizationId: string) {
     const result = await this.pool.query(
-      `SELECT count(*)::integer AS "sampleCount",min(observed_at) AS "from",max(observed_at) AS "through" FROM telemetry_samples WHERE device_uuid=$1`,
-      [deviceUuid],
+      `SELECT count(*)::integer AS "sampleCount",min(observed_at) AS "from",max(observed_at) AS "through"
+         FROM telemetry_samples WHERE device_uuid=$1 AND organization_id_at_ingest=$2`,
+      [deviceUuid, organizationId],
     );
     return result.rows[0] as Record<string, unknown>;
   }
