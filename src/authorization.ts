@@ -1,7 +1,11 @@
+export interface DeviceReadDecision {
+  allowed: boolean;
+  organizationId?: string | undefined;
+}
 export type DeviceReadAuthorizer = (
   subjectId: string,
   deviceUuid: string,
-) => Promise<boolean>;
+) => Promise<DeviceReadDecision>;
 
 let cachedToken: { value: string; expiresAt: number } | undefined;
 
@@ -58,7 +62,15 @@ export function createDeviceReadAuthorizer(
     );
     if (!response.ok)
       throw new Error(`Access authorization failed with ${response.status}`);
-    const decision = (await response.json()) as { allowed?: boolean };
-    return decision.allowed === true;
+    const decision = (await response.json()) as {
+      allowed?: boolean;
+      organizationId?: string;
+    };
+    return {
+      allowed: decision.allowed === true,
+      ...(decision.organizationId
+        ? { organizationId: decision.organizationId }
+        : {}),
+    };
   };
 }

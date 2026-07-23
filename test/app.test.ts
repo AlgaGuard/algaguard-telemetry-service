@@ -38,7 +38,10 @@ const authenticate: Authenticator = async (authorization) => {
 function authorizedApp(overrides: Partial<RouteDependencies> = {}) {
   const dependencies: RouteDependencies = {
     authenticate,
-    authorizeDeviceRead: async () => true,
+    authorizeDeviceRead: async () => ({
+      allowed: true,
+      organizationId: batch.organizationId,
+    }),
     accept: async () => acceptedOutcome,
     history: async () => [],
     aggregate: async () => ({ sampleCount: 0 }),
@@ -90,7 +93,9 @@ test("only the authenticated MQTT ingestion client can commit batches", async ()
 });
 
 test("telemetry reads require an Access Service decision", async () => {
-  const denied = authorizedApp({ authorizeDeviceRead: async () => false });
+  const denied = authorizedApp({
+    authorizeDeviceRead: async () => ({ allowed: false }),
+  });
   assert.equal(
     (
       await request(denied)
@@ -99,7 +104,12 @@ test("telemetry reads require an Access Service decision", async () => {
     ).status,
     403,
   );
-  const allowed = authorizedApp({ authorizeDeviceRead: async () => true });
+  const allowed = authorizedApp({
+    authorizeDeviceRead: async () => ({
+      allowed: true,
+      organizationId: batch.organizationId,
+    }),
+  });
   assert.equal(
     (
       await request(allowed)
@@ -108,6 +118,17 @@ test("telemetry reads require an Access Service decision", async () => {
     ).status,
     200,
   );
+});
+
+test("allowed reads without trusted organization context are denied", async () => {
+  const response = await request(
+    authorizedApp({
+      authorizeDeviceRead: async () => ({ allowed: true }),
+    }),
+  )
+    .get(`/v1/devices/${batch.deviceUuid}/latest`)
+    .set("authorization", "Bearer user");
+  assert.equal(response.status, 403);
 });
 
 test("contract maximum of 120 samples is accepted", async () => {

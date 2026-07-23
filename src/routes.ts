@@ -27,9 +27,13 @@ export interface RouteDependencies {
   accept(batch: TelemetryBatch): Promise<BatchOutcome>;
   history(
     deviceUuid: string,
+    organizationId: string,
     limit: number,
   ): Promise<Array<Record<string, unknown>>>;
-  aggregate(deviceUuid: string): Promise<Record<string, unknown>>;
+  aggregate(
+    deviceUuid: string,
+    organizationId: string,
+  ): Promise<Record<string, unknown>>;
 }
 
 const decimalSequence = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
@@ -127,8 +131,10 @@ export function createRouter(
     authenticate: createAuthenticator(),
     authorizeDeviceRead: createDeviceReadAuthorizer(),
     accept: async (batch) => defaultService.accept(batch),
-    history: async (deviceUuid, limit) => storage().history(deviceUuid, limit),
-    aggregate: async (deviceUuid) => storage().aggregate(deviceUuid),
+    history: async (deviceUuid, organizationId, limit) =>
+      storage().history(deviceUuid, organizationId, limit),
+    aggregate: async (deviceUuid, organizationId) =>
+      storage().aggregate(deviceUuid, organizationId),
   },
 ) {
   const router = Router();
@@ -147,16 +153,22 @@ export function createRouter(
   async function authorizeRead(request: Request) {
     const principal = await actor(request, dependencies.authenticate);
     const deviceUuid = z.string().uuid().parse(request.params.id);
-    if (
-      !(await dependencies.authorizeDeviceRead(principal.subjectId, deviceUuid))
-    ) {
+    const decision = await dependencies.authorizeDeviceRead(
+      principal.subjectId,
+      deviceUuid,
+    );
+    if (!decision.allowed) {
       throw new HttpError(403, "Telemetry read is not authorized");
     }
-    return deviceUuid;
+    const organizationId = z.string().uuid().safeParse(decision.organizationId);
+    if (!organizationId.success) {
+      throw new HttpError(403, "Authorized organization context is required");
+    }
+    return { deviceUuid, organizationId: organizationId.data };
   }
 
   router.get("/devices/:id/telemetry", async (request, response) => {
-    const deviceUuid = await authorizeRead(request);
+    const { deviceUuid, organizationId } = await authorizeRead(request);
     const limit = z.coerce
       .number()
       .int()
@@ -166,19 +178,19 @@ export function createRouter(
       .parse(request.query.limit);
     response.json({
       deviceUuid,
-      items: await dependencies.history(deviceUuid, limit),
+      items: await dependencies.history(deviceUuid, organizationId, limit),
     });
   });
   router.get("/devices/:id/latest", async (request, response) => {
-    const deviceUuid = await authorizeRead(request);
-    const items = await dependencies.history(deviceUuid, 1);
+    const { deviceUuid, organizationId } = await authorizeRead(request);
+    const items = await dependencies.history(deviceUuid, organizationId, 1);
     response.json({ deviceUuid, latest: items[0] ?? null });
   });
   router.get("/devices/:id/aggregate", async (request, response) => {
-    const deviceUuid = await authorizeRead(request);
+    const { deviceUuid, organizationId } = await authorizeRead(request);
     response.json({
       deviceUuid,
-      ...(await dependencies.aggregate(deviceUuid)),
+      ...(await dependencies.aggregate(deviceUuid, organizationId)),
     });
   });
   return router;

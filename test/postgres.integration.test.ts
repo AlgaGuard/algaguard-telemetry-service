@@ -77,6 +77,26 @@ test(
         ownership_version_at_ingest: "2",
       },
     ]);
+    assert.equal(
+      (await restarted.history(batch.deviceUuid, batch.organizationId, 10))
+        .length,
+      1,
+    );
+    assert.equal(
+      (
+        await restarted.history(
+          batch.deviceUuid,
+          transferred.organizationId,
+          10,
+        )
+      ).length,
+      1,
+    );
+    assert.equal(
+      (await restarted.aggregate(batch.deviceUuid, transferred.organizationId))
+        .sampleCount,
+      1,
+    );
 
     const replayWithNewBatch = await restarted.persist({
       ...transferred,
