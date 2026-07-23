@@ -24,9 +24,23 @@ export class TelemetryRepository {
     try {
       await client.query("BEGIN");
       const claimed = await client.query(
-        `INSERT INTO telemetry_batches(batch_id,device_id,status,accepted_through_sequence,duplicate,stored_samples,received_at)
-         VALUES($1,$2,'PROCESSING',NULL,false,0,$3) ON CONFLICT(batch_id) DO NOTHING RETURNING batch_id`,
-        [batch.batchId, batch.deviceId, receivedAt],
+        `INSERT INTO telemetry_batches(
+           batch_id,device_id,device_uuid,organization_id_at_ingest,
+           ownership_version_at_ingest,first_sequence,last_sequence,sample_count,
+           status,accepted_through_sequence,duplicate,stored_samples,received_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PROCESSING',NULL,false,0,$9)
+         ON CONFLICT(batch_id) DO NOTHING RETURNING batch_id`,
+        [
+          batch.batchId,
+          batch.deviceId,
+          batch.deviceUuid,
+          batch.organizationId,
+          batch.ownershipVersion,
+          batch.samples[0]!.sequence,
+          batch.samples.at(-1)!.sequence,
+          batch.samples.length,
+          receivedAt,
+        ],
       );
       if (!claimed.rowCount) {
         const prior = await client.query(
@@ -39,7 +53,10 @@ export class TelemetryRepository {
           batchId: batch.batchId,
           deviceId: String(row.device_id),
           status: "DUPLICATE",
-          acceptedThroughSequence: String(row.accepted_through_sequence),
+          acceptedThroughSequence:
+            row.accepted_through_sequence === null
+              ? null
+              : String(row.accepted_through_sequence),
           duplicate: true,
           storedSamples: 0,
           receivedAt: new Date(row.received_at).toISOString(),
@@ -49,17 +66,30 @@ export class TelemetryRepository {
       let storedSamples = 0;
       for (const sample of batch.samples) {
         const key = await client.query(
-          `INSERT INTO telemetry_sequence_keys(device_id,sequence,batch_id)
-           VALUES($1,$2,$3) ON CONFLICT(device_id,sequence) DO NOTHING RETURNING sequence`,
-          [batch.deviceId, sample.sequence, batch.batchId],
+          `INSERT INTO telemetry_sequence_keys(
+             device_id,sequence,batch_id,device_uuid,organization_id_at_ingest,
+             ownership_version_at_ingest)
+           VALUES($1,$2,$3,$4,$5,$6)
+           ON CONFLICT(device_id,sequence) DO NOTHING RETURNING sequence`,
+          [
+            batch.deviceId,
+            sample.sequence,
+            batch.batchId,
+            batch.deviceUuid,
+            batch.organizationId,
+            batch.ownershipVersion,
+          ],
         );
         if (!key.rowCount) {
           rejected.push(sample.sequence);
           continue;
         }
         await client.query(
-          `INSERT INTO telemetry_samples(device_id,sequence,observed_at,values,quality_flags,batch_id)
-           VALUES($1,$2,$3,$4::jsonb,$5::text[],$6)`,
+          `INSERT INTO telemetry_samples(
+             device_id,sequence,observed_at,values,quality_flags,batch_id,
+             device_uuid,organization_id_at_ingest,ownership_version_at_ingest,
+             timestamp_quality,uptime_ms,simulation_scenario,extensions)
+           VALUES($1,$2,$3,$4::jsonb,$5::text[],$6,$7,$8,$9,$10,$11,$12,$13::jsonb)`,
           [
             batch.deviceId,
             sample.sequence,
@@ -67,6 +97,13 @@ export class TelemetryRepository {
             JSON.stringify(sample.values),
             sample.qualityFlags ?? [],
             batch.batchId,
+            batch.deviceUuid,
+            batch.organizationId,
+            batch.ownershipVersion,
+            sample.timestampQuality,
+            sample.uptimeMs,
+            sample.simulationScenario ?? null,
+            JSON.stringify(sample.extensions ?? {}),
           ],
         );
         storedSamples += 1;
@@ -121,17 +158,21 @@ export class TelemetryRepository {
     if (!this.redis.isOpen) await this.redis.connect();
     await this.redis.publish("algaguard.live", JSON.stringify(event));
   }
-  async history(deviceId: string, limit: number) {
+  async history(deviceUuid: string, limit: number) {
     const result = await this.pool.query(
-      `SELECT sequence::text,observed_at AS "observedAt",values,quality_flags AS "qualityFlags",batch_id AS "batchId" FROM telemetry_samples WHERE device_id=$1 ORDER BY observed_at DESC LIMIT $2`,
-      [deviceId, Math.min(Math.max(limit, 1), 200)],
+      `SELECT device_id AS "deviceId",organization_id_at_ingest AS "organizationIdAtIngest",
+              ownership_version_at_ingest::text AS "ownershipVersionAtIngest",
+              sequence::text,observed_at AS "observedAt",timestamp_quality AS "timestampQuality",
+              uptime_ms::text AS "uptimeMs",values,quality_flags AS "qualityFlags",batch_id AS "batchId"
+         FROM telemetry_samples WHERE device_uuid=$1 ORDER BY observed_at DESC LIMIT $2`,
+      [deviceUuid, Math.min(Math.max(limit, 1), 200)],
     );
     return result.rows as Array<Record<string, unknown>>;
   }
-  async aggregate(deviceId: string) {
+  async aggregate(deviceUuid: string) {
     const result = await this.pool.query(
-      `SELECT count(*)::integer AS "sampleCount",min(observed_at) AS "from",max(observed_at) AS "through" FROM telemetry_samples WHERE device_id=$1`,
-      [deviceId],
+      `SELECT count(*)::integer AS "sampleCount",min(observed_at) AS "from",max(observed_at) AS "through" FROM telemetry_samples WHERE device_uuid=$1`,
+      [deviceUuid],
     );
     return result.rows[0] as Record<string, unknown>;
   }
