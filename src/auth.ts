@@ -49,9 +49,9 @@ export function createAuthenticator(
       .map((value) => value.trim())
       .filter(Boolean),
   );
-  const jwks = createRemoteJWKSet(
-    new URL(`${issuer}/protocol/openid-connect/certs`),
-  );
+  const jwksUrl =
+    environment.KEYCLOAK_JWKS_URL ?? `${issuer}/protocol/openid-connect/certs`;
+  const jwks = createRemoteJWKSet(new URL(jwksUrl));
   return async (authorization) => {
     const match = /^Bearer ([^ ]+)$/.exec(authorization ?? "");
     if (!match?.[1]) throw new HttpError(401, "Bearer token required");
