@@ -186,6 +186,35 @@ export function createRouter(
     const items = await dependencies.history(deviceUuid, organizationId, 1);
     response.json({ deviceUuid, latest: items[0] ?? null });
   });
+  router.post("/devices/latest-batch", async (request, response) => {
+    const principal = await actor(request, dependencies.authenticate);
+    const input = z
+      .object({ deviceUuids: z.array(z.string().uuid()).min(1).max(200) })
+      .strict()
+      .parse(request.body);
+    const items = (
+      await Promise.all(
+        input.deviceUuids.map(async (deviceUuid) => {
+          const decision = await dependencies.authorizeDeviceRead(
+            principal.subjectId,
+            deviceUuid,
+          );
+          const organizationId = z
+            .string()
+            .uuid()
+            .safeParse(decision.organizationId);
+          if (!decision.allowed || !organizationId.success) return undefined;
+          const history = await dependencies.history(
+            deviceUuid,
+            organizationId.data,
+            1,
+          );
+          return { deviceUuid, latest: history[0] ?? null };
+        }),
+      )
+    ).filter((item) => item !== undefined);
+    response.json({ items });
+  });
   router.get("/devices/:id/aggregate", async (request, response) => {
     const { deviceUuid, organizationId } = await authorizeRead(request);
     response.json({

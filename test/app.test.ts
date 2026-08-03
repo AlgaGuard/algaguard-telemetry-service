@@ -131,6 +131,27 @@ test("allowed reads without trusted organization context are denied", async () =
   assert.equal(response.status, 403);
 });
 
+test("latest-batch returns only authorized devices and skips unreadable ones", async () => {
+  const otherDeviceUuid = "20000000-0000-4000-8000-000000000099";
+  const app = authorizedApp({
+    authorizeDeviceRead: async (_subjectId, deviceUuid) =>
+      deviceUuid === batch.deviceUuid
+        ? { allowed: true, organizationId: batch.organizationId }
+        : { allowed: false },
+    history: async (deviceUuid) => [
+      { deviceUuid, sequence: "1", values: { ph: 7 } },
+    ],
+  });
+  const response = await request(app)
+    .post("/v1/devices/latest-batch")
+    .set("authorization", "Bearer user")
+    .send({ deviceUuids: [batch.deviceUuid, otherDeviceUuid] });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.items.length, 1);
+  assert.equal(response.body.items[0].deviceUuid, batch.deviceUuid);
+  assert.equal(response.body.items[0].latest.values.ph, 7);
+});
+
 test("contract maximum of 120 samples is accepted", async () => {
   const samples = Array.from({ length: 120 }, (_, index) => ({
     sequence: String(index + 1),
