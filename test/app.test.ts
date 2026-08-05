@@ -92,6 +92,23 @@ test("only the authenticated MQTT ingestion client can commit batches", async ()
   assert.equal(accepted, true);
 });
 
+test("a batch with no activeProfile is accepted (profile assignment routes notifications, not telemetry)", async () => {
+  let receivedActiveProfile: unknown = "not-called";
+  const { activeProfile: _activeProfile, ...body } = batch;
+  const app = authorizedApp({
+    accept: async (batch) => {
+      receivedActiveProfile = batch.activeProfile;
+      return acceptedOutcome;
+    },
+  });
+  const response = await request(app)
+    .post("/v1/ingestion/batches")
+    .set("authorization", "Bearer mqtt")
+    .send(body);
+  assert.equal(response.status, 202);
+  assert.equal(receivedActiveProfile, undefined);
+});
+
 test("telemetry reads require an Access Service decision", async () => {
   const denied = authorizedApp({
     authorizeDeviceRead: async () => ({ allowed: false }),

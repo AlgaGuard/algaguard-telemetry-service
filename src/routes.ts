@@ -117,7 +117,8 @@ const batchSchema = z
             /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/,
           ),
       })
-      .strict(),
+      .strict()
+      .optional(),
     samples: z.array(telemetrySample).min(1).max(120),
   })
   .strict();
