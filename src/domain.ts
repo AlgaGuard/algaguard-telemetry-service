@@ -9,9 +9,7 @@ export interface TelemetrySample {
     temperatureC?: number | undefined;
     ph?: number | undefined;
     lightLux?: number | undefined;
-    nitrateMgL?: number | undefined;
-    phosphateMgL?: number | undefined;
-    potassiumMgL?: number | undefined;
+    nutrientPercent?: number | undefined;
     batteryPercent?: number | undefined;
     batteryVoltageV?: number | undefined;
   };
