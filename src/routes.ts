@@ -50,6 +50,8 @@ const parameterValues = z
   .strict()
   .refine((value) => Object.keys(value).length > 0, "values must not be empty");
 const qualityFlag = z.enum([
+  "REAL",
+  "DEGRADED",
   "SIMULATED",
   "SENSOR_UNAVAILABLE",
   "OUT_OF_EXPECTED_RANGE",
