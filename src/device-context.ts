@@ -1,6 +1,17 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import * as grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
 import { serviceToken } from "./authorization.js";
+import {
+  createServiceTokenProvider,
+  metadataWithServiceToken,
+} from "./grpc-client.js";
 import type { DeviceContext } from "./domain.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const DEVICE_STATUS_NAME: Record<number, "ACTIVE"> = { 5: "ACTIVE" };
 
 const deviceContextSchema = z
   .object({
@@ -40,6 +51,56 @@ export function createDeviceContextResolver(
       );
     }
     const context = deviceContextSchema.parse(await response.json());
+    if (context.deviceId !== deviceId) {
+      throw new Error("Device Service returned mismatched canonical identity");
+    }
+    return context;
+  };
+}
+
+export function createGrpcDeviceContextResolver(
+  address: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  tokenProvider = createServiceTokenProvider(environment),
+) {
+  const protoPath = path.resolve(here, "..", "proto", "device_service.proto");
+  const packageDefinition = protoLoader.loadSync(protoPath, {
+    keepCase: false,
+    longs: String,
+    enums: Number,
+    defaults: true,
+    oneofs: true,
+    includeDirs: [path.dirname(protoPath)],
+  });
+  const proto = grpc.loadPackageDefinition(packageDefinition) as any;
+  const client = new proto.algaguard.device.v1.DeviceLookupService(
+    address,
+    grpc.credentials.createInsecure(),
+  );
+  return async (deviceId: string): Promise<DeviceContext> => {
+    const metadata = await metadataWithServiceToken(tokenProvider);
+    const response = await new Promise<any>((resolve, reject) => {
+      client.getContextByDeviceId(
+        { deviceId },
+        metadata,
+        (error: grpc.ServiceError, value: unknown) =>
+          error ? reject(error) : resolve(value),
+      );
+    });
+    const context = deviceContextSchema.parse({
+      schema: "urn:algaguard:schema:internal:device-context:v1",
+      schemaVersion: "1.0.0",
+      deviceUuid: response.deviceUuid,
+      deviceId: response.deviceId,
+      organizationId: response.organizationId,
+      status: DEVICE_STATUS_NAME[response.status] ?? "ACTIVE",
+      ownershipVersion: response.ownershipVersion,
+      resolvedAt: response.resolvedAt,
+      ...(response.tankId ? { tankId: response.tankId } : {}),
+      ...(response.contextVersion
+        ? { contextVersion: response.contextVersion }
+        : {}),
+    });
     if (context.deviceId !== deviceId) {
       throw new Error("Device Service returned mismatched canonical identity");
     }

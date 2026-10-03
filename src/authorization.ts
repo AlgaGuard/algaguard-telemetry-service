@@ -1,3 +1,20 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import * as grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
+import {
+  createServiceTokenProvider,
+  metadataWithServiceToken,
+} from "./grpc-client.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ACCESS_PROTO_PATH = path.resolve(
+  here,
+  "..",
+  "proto",
+  "access_service.proto",
+);
+
 export interface DeviceReadDecision {
   allowed: boolean;
   organizationId?: string | undefined;
@@ -72,6 +89,48 @@ export function createDeviceReadAuthorizer(
       allowed: decision.allowed === true,
       ...(decision.organizationId
         ? { organizationId: decision.organizationId }
+        : {}),
+    };
+  };
+}
+
+export function createGrpcDeviceReadAuthorizer(
+  address: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  serviceToken = createServiceTokenProvider(environment),
+): DeviceReadAuthorizer {
+  const packageDefinition = protoLoader.loadSync(ACCESS_PROTO_PATH, {
+    keepCase: false,
+    longs: String,
+    enums: Number,
+    defaults: true,
+    oneofs: true,
+    includeDirs: [path.dirname(ACCESS_PROTO_PATH)],
+  });
+  const proto = grpc.loadPackageDefinition(packageDefinition) as any;
+  const client = new proto.algaguard.access.v1.AuthorizationService(
+    address,
+    grpc.credentials.createInsecure(),
+  );
+  return async (subjectId, deviceUuid) => {
+    const metadata = await metadataWithServiceToken(serviceToken);
+    const response = await new Promise<any>((resolve, reject) => {
+      client.decide(
+        {
+          subjectId,
+          action: "telemetry.read",
+          resourceType: 2, // device
+          resourceId: deviceUuid,
+        },
+        metadata,
+        (error: grpc.ServiceError, value: unknown) =>
+          error ? reject(error) : resolve(value),
+      );
+    });
+    return {
+      allowed: response.allowed === true,
+      ...(response.resolvedOrganizationId
+        ? { organizationId: response.resolvedOrganizationId }
         : {}),
     };
   };

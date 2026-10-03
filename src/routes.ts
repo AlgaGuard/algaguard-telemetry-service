@@ -2,10 +2,10 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { createAuthenticator, HttpError, type Authenticator } from "./auth.js";
 import {
-  createDeviceReadAuthorizer,
+  createGrpcDeviceReadAuthorizer,
   type DeviceReadAuthorizer,
 } from "./authorization.js";
-import { createDeviceContextResolver } from "./device-context.js";
+import { createGrpcDeviceContextResolver } from "./device-context.js";
 import {
   TelemetryService,
   type BatchOutcome,
@@ -13,12 +13,17 @@ import {
 } from "./domain.js";
 import { TelemetryRepository } from "./storage.js";
 
+const accessServiceGrpcAddress =
+  process.env.ACCESS_SERVICE_GRPC_ADDRESS ?? "access-service:50051";
+const deviceServiceGrpcAddress =
+  process.env.DEVICE_SERVICE_GRPC_ADDRESS ?? "device-service:50051";
+
 let repository: TelemetryRepository | undefined;
 export const storage = () => (repository ??= new TelemetryRepository());
 const defaultService = new TelemetryService(
   async (batch) => storage().persist(batch),
   async (event) => storage().publish(event),
-  createDeviceContextResolver(),
+  createGrpcDeviceContextResolver(deviceServiceGrpcAddress),
 );
 
 export interface RouteDependencies {
@@ -130,7 +135,9 @@ async function actor(request: Request, authenticate: Authenticator) {
 export function createRouter(
   dependencies: RouteDependencies = {
     authenticate: createAuthenticator(),
-    authorizeDeviceRead: createDeviceReadAuthorizer(),
+    authorizeDeviceRead: createGrpcDeviceReadAuthorizer(
+      accessServiceGrpcAddress,
+    ),
     accept: async (batch) => defaultService.accept(batch),
     history: async (deviceUuid, organizationId, limit) =>
       storage().history(deviceUuid, organizationId, limit),
