@@ -21,7 +21,12 @@ export const batch: TelemetryBatch = {
       observedAt: "2026-07-23T00:00:00Z",
       timestampQuality: "NTP_SYNCED",
       uptimeMs: "1000",
-      values: { ph: 7 },
+      values: {
+        ph: 7,
+        nitrateMgL: 68.61,
+        phosphateMgL: 9.81,
+        potassiumMgL: 26.79,
+      },
     },
   ],
 };
